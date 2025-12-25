@@ -645,4 +645,202 @@ impl NMClient {
             .await?;
         Ok(())
     }
+
+    /// Add 802.1X enterprise connection via D-Bus
+    pub async fn add_enterprise_connection(
+        &self,
+        ssid: &str,
+        eap_method: &str,
+        identity: &str,
+        password: Option<&str>,
+        phase2_auth: Option<&str>,
+        ca_cert: Option<&str>,
+        client_cert: Option<&str>,
+        private_key: Option<&str>,
+        private_key_password: Option<&str>,
+    ) -> Result<OwnedObjectPath> {
+        let proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            "/org/freedesktop/NetworkManager/Settings",
+            "org.freedesktop.NetworkManager.Settings",
+        )
+        .await?;
+
+        let mut connection_settings: HashMap<&str, HashMap<&str, Value>> = HashMap::new();
+
+        // Connection section
+        let mut conn: HashMap<&str, Value> = HashMap::new();
+        conn.insert("type", Value::from("802-11-wireless"));
+        conn.insert("id", Value::from(ssid));
+        connection_settings.insert("connection", conn);
+
+        // Wireless section
+        let mut wireless: HashMap<&str, Value> = HashMap::new();
+        wireless.insert("ssid", Value::from(ssid.as_bytes().to_vec()));
+        connection_settings.insert("802-11-wireless", wireless);
+
+        // Wireless security section
+        let mut security: HashMap<&str, Value> = HashMap::new();
+        security.insert("key-mgmt", Value::from("wpa-eap"));
+        connection_settings.insert("802-11-wireless-security", security);
+
+        // 802.1X section
+        let mut eap: HashMap<&str, Value> = HashMap::new();
+        eap.insert("eap", Value::from(vec![eap_method]));
+        eap.insert("identity", Value::from(identity));
+
+        if let Some(pwd) = password {
+            eap.insert("password", Value::from(pwd));
+        }
+
+        if let Some(phase2) = phase2_auth {
+            eap.insert("phase2-auth", Value::from(phase2));
+        }
+
+        if let Some(ca) = ca_cert {
+            if !ca.is_empty() {
+                eap.insert("ca-cert", Value::from(format!("file://{}", ca).as_bytes().to_vec()));
+            }
+        }
+
+        if let Some(cert) = client_cert {
+            if !cert.is_empty() {
+                eap.insert("client-cert", Value::from(format!("file://{}", cert).as_bytes().to_vec()));
+            }
+        }
+
+        if let Some(key) = private_key {
+            if !key.is_empty() {
+                eap.insert("private-key", Value::from(format!("file://{}", key).as_bytes().to_vec()));
+            }
+        }
+
+        if let Some(key_pwd) = private_key_password {
+            if !key_pwd.is_empty() {
+                eap.insert("private-key-password", Value::from(key_pwd));
+            }
+        }
+
+        connection_settings.insert("802-1x", eap);
+
+        // IPv4 section
+        let mut ipv4: HashMap<&str, Value> = HashMap::new();
+        ipv4.insert("method", Value::from("auto"));
+        connection_settings.insert("ipv4", ipv4);
+
+        // IPv6 section
+        let mut ipv6: HashMap<&str, Value> = HashMap::new();
+        ipv6.insert("method", Value::from("auto"));
+        connection_settings.insert("ipv6", ipv6);
+
+        let connection_path: OwnedObjectPath = proxy
+            .call("AddConnection", &(connection_settings,))
+            .await?;
+
+        Ok(connection_path)
+    }
+
+    /// Add and activate 802.1X enterprise connection
+    pub async fn add_and_activate_enterprise_connection(
+        &self,
+        device_path: &str,
+        ssid: &str,
+        eap_method: &str,
+        identity: &str,
+        password: Option<&str>,
+        phase2_auth: Option<&str>,
+        ca_cert: Option<&str>,
+        client_cert: Option<&str>,
+        private_key: Option<&str>,
+        private_key_password: Option<&str>,
+    ) -> Result<OwnedObjectPath> {
+        let proxy = Proxy::new(
+            &self.connection,
+            NM_BUS_NAME,
+            NM_PATH,
+            "org.freedesktop.NetworkManager",
+        )
+        .await?;
+
+        let mut connection_settings: HashMap<&str, HashMap<&str, Value>> = HashMap::new();
+
+        // Connection section
+        let mut conn: HashMap<&str, Value> = HashMap::new();
+        conn.insert("type", Value::from("802-11-wireless"));
+        conn.insert("id", Value::from(ssid));
+        connection_settings.insert("connection", conn);
+
+        // Wireless section
+        let mut wireless: HashMap<&str, Value> = HashMap::new();
+        wireless.insert("ssid", Value::from(ssid.as_bytes().to_vec()));
+        connection_settings.insert("802-11-wireless", wireless);
+
+        // Wireless security section
+        let mut security: HashMap<&str, Value> = HashMap::new();
+        security.insert("key-mgmt", Value::from("wpa-eap"));
+        connection_settings.insert("802-11-wireless-security", security);
+
+        // 802.1X section
+        let mut eap: HashMap<&str, Value> = HashMap::new();
+        eap.insert("eap", Value::from(vec![eap_method]));
+        eap.insert("identity", Value::from(identity));
+
+        if let Some(pwd) = password {
+            eap.insert("password", Value::from(pwd));
+        }
+
+        if let Some(phase2) = phase2_auth {
+            eap.insert("phase2-auth", Value::from(phase2));
+        }
+
+        if let Some(ca) = ca_cert {
+            if !ca.is_empty() {
+                eap.insert("ca-cert", Value::from(format!("file://{}", ca).as_bytes().to_vec()));
+            }
+        }
+
+        if let Some(cert) = client_cert {
+            if !cert.is_empty() {
+                eap.insert("client-cert", Value::from(format!("file://{}", cert).as_bytes().to_vec()));
+            }
+        }
+
+        if let Some(key) = private_key {
+            if !key.is_empty() {
+                eap.insert("private-key", Value::from(format!("file://{}", key).as_bytes().to_vec()));
+            }
+        }
+
+        if let Some(key_pwd) = private_key_password {
+            if !key_pwd.is_empty() {
+                eap.insert("private-key-password", Value::from(key_pwd));
+            }
+        }
+
+        connection_settings.insert("802-1x", eap);
+
+        // IPv4 section
+        let mut ipv4: HashMap<&str, Value> = HashMap::new();
+        ipv4.insert("method", Value::from("auto"));
+        connection_settings.insert("ipv4", ipv4);
+
+        // IPv6 section
+        let mut ipv6: HashMap<&str, Value> = HashMap::new();
+        ipv6.insert("method", Value::from("auto"));
+        connection_settings.insert("ipv6", ipv6);
+
+        let result: (OwnedObjectPath, OwnedObjectPath) = proxy
+            .call(
+                "AddAndActivateConnection",
+                &(
+                    connection_settings,
+                    ObjectPath::try_from(device_path)?,
+                    ObjectPath::try_from("/")?,
+                ),
+            )
+            .await?;
+
+        Ok(result.1)
+    }
 }

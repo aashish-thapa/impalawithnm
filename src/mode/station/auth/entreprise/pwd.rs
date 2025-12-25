@@ -99,6 +99,14 @@ impl PWD {
         self.state.selected().is_some()
     }
 
+    pub fn get_identity(&self) -> String {
+        self.identity.field.value().to_string()
+    }
+
+    pub fn get_password(&self) -> String {
+        self.password.field.value().to_string()
+    }
+
     pub fn apply(&mut self, network_name: &str) -> Result<()> {
         self.validate()?;
 
