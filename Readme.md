@@ -2,6 +2,11 @@
   <h1>wlctl</h1>
   <h3>TUI for managing WiFi using NetworkManager</h3>
   <p>A fork of <a href="https://github.com/pythops/impala">impala</a> that uses NetworkManager instead of iwd</p>
+
+  [![CI](https://github.com/aashish-thapa/impalawithnm/actions/workflows/ci.yaml/badge.svg)](https://github.com/aashish-thapa/impalawithnm/actions/workflows/ci.yaml)
+  [![Crates.io](https://img.shields.io/crates/v/wlctl.svg)](https://crates.io/crates/wlctl)
+  [![Downloads](https://img.shields.io/crates/d/wlctl.svg)](https://crates.io/crates/wlctl)
+  [![License](https://img.shields.io/crates/l/wlctl.svg)](https://github.com/aashish-thapa/impalawithnm/blob/main/LICENSE)
 </div>
 
 ## Purpose
