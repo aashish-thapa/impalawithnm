@@ -6,7 +6,8 @@ use crate::nm::{Mode, NMClient};
 
 use crate::{
     adapter::Adapter, agent::AuthAgent, config::Config, device::Device, event::Event,
-    mode::station::auth::Auth, notification::Notification, reset::Reset,
+    mode::station::auth::Auth, mode::station::network::Network, notification::Notification,
+    reset::Reset,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -38,6 +39,7 @@ pub struct App {
     pub config: Arc<Config>,
     pub auth: Auth,
     pub network_name_requiring_auth: Option<String>,
+    pub network_pending_auth: Option<Network>,
 }
 
 impl App {
@@ -105,6 +107,7 @@ Error: {}",
             config,
             auth: Auth::default(),
             network_name_requiring_auth: None,
+            network_pending_auth: None,
         })
     }
 
