@@ -11,8 +11,6 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear},
 };
 
-use crate::iwd_network_name;
-
 #[derive(Clone)]
 pub struct Share {
     pub qr_code: QrCode,
@@ -22,24 +20,56 @@ pub struct Share {
 
 impl Share {
     pub fn new(network_name: String) -> Result<Self> {
-        let encoded_network_name = iwd_network_name(&network_name);
-        let content = fs::read_to_string(format!("/var/lib/iwd/{}.psk", encoded_network_name))?;
+        // NetworkManager stores connections in /etc/NetworkManager/system-connections/
+        // Files are named <connection-id>.nmconnection
+        let nm_path = format!(
+            "/etc/NetworkManager/system-connections/{}.nmconnection",
+            network_name
+        );
 
-        if let Some(line) = content
-            .lines()
-            .find(|&line| line.starts_with("Passphrase="))
-            && let Some((_, passphrase)) = line.split_once('=')
-        {
-            let message = format!("WIFI:T:WPA;S:{network_name};P:{passphrase};;");
-            let qr_code = QrCode::new(message)?;
-            Ok(Self {
-                qr_code,
-                network_name,
-                passphrase: passphrase.to_string(),
-            })
-        } else {
-            unreachable!()
+        let content = fs::read_to_string(&nm_path).or_else(|_| {
+            // Try alternative naming conventions
+            // NetworkManager may encode special characters
+            let escaped_name = network_name.replace(' ', "_");
+            fs::read_to_string(format!(
+                "/etc/NetworkManager/system-connections/{}.nmconnection",
+                escaped_name
+            ))
+        })?;
+
+        // Parse the NetworkManager connection file (INI-like format)
+        // Look for psk= in [wifi-security] section
+        let mut in_wifi_security = false;
+        let mut passphrase = None;
+
+        for line in content.lines() {
+            let line = line.trim();
+            if line == "[wifi-security]" {
+                in_wifi_security = true;
+                continue;
+            }
+            if line.starts_with('[') {
+                in_wifi_security = false;
+                continue;
+            }
+            if in_wifi_security && line.starts_with("psk=") {
+                passphrase = Some(line.trim_start_matches("psk=").to_string());
+                break;
+            }
         }
+
+        let passphrase = passphrase.ok_or_else(|| {
+            anyhow::anyhow!("No password found for network {}", network_name)
+        })?;
+
+        let message = format!("WIFI:T:WPA;S:{network_name};P:{passphrase};;");
+        let qr_code = QrCode::new(message)?;
+
+        Ok(Self {
+            qr_code,
+            network_name,
+            passphrase,
+        })
     }
 
     pub fn render(&self, frame: &mut Frame) {
