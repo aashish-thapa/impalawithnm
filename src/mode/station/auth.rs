@@ -1,6 +1,8 @@
 pub mod entreprise;
 pub mod psk;
 
+use std::sync::Arc;
+
 use crate::mode::station::auth::{
     entreprise::{
         WPAEntreprise,
@@ -11,6 +13,7 @@ use crate::mode::station::auth::{
     },
     psk::Psk,
 };
+use crate::nm::NMClient;
 
 #[derive(Debug, Default)]
 pub struct Auth {
@@ -22,8 +25,8 @@ pub struct Auth {
 }
 
 impl Auth {
-    pub fn init_eap(&mut self, network_name: String) {
-        self.eap = Some(WPAEntreprise::new(network_name));
+    pub fn init_eap(&mut self, network_name: String, client: Option<Arc<NMClient>>) {
+        self.eap = Some(WPAEntreprise::new(network_name, client));
     }
 
     pub fn reset(&mut self) {

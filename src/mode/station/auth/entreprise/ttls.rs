@@ -173,6 +173,38 @@ impl TTLS {
         self.state.selected().is_some()
     }
 
+    pub fn get_identity(&self) -> String {
+        self.identity.field.value().to_string()
+    }
+
+    pub fn get_ca_cert(&self) -> Option<String> {
+        let val = self.ca_cert.field.value();
+        if val.is_empty() { None } else { Some(val.to_string()) }
+    }
+
+    pub fn get_client_cert(&self) -> Option<String> {
+        let val = self.client_cert.field.value();
+        if val.is_empty() { None } else { Some(val.to_string()) }
+    }
+
+    pub fn get_client_key(&self) -> Option<String> {
+        let val = self.client_key.field.value();
+        if val.is_empty() { None } else { Some(val.to_string()) }
+    }
+
+    pub fn get_key_passphrase(&self) -> Option<String> {
+        let val = self.key_passphrase.field.value();
+        if val.is_empty() { None } else { Some(val.to_string()) }
+    }
+
+    pub fn get_phase2_method(&self) -> String {
+        self.phase2_method.to_string().to_lowercase().replace("tunneled", "")
+    }
+
+    pub fn get_phase2_password(&self) -> String {
+        self.phase2_password.field.value().to_string()
+    }
+
     pub fn apply(&mut self, network_name: &str) -> Result<()> {
         self.validate()?;
 

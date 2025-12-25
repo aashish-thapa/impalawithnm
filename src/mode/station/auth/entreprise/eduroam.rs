@@ -111,6 +111,14 @@ impl Eduroam {
         self.state.selected().is_some()
     }
 
+    pub fn get_identity(&self) -> String {
+        self.identity.field.value().to_string()
+    }
+
+    pub fn get_phase2_password(&self) -> String {
+        self.phase2_password.field.value().to_string()
+    }
+
     pub fn apply(&mut self) -> Result<()> {
         self.validate()?;
         let mut file = OpenOptions::new()

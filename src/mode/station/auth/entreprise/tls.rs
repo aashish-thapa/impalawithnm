@@ -163,6 +163,27 @@ impl TLS {
         self.state.selected().is_some()
     }
 
+    pub fn get_identity(&self) -> String {
+        self.identity.field.value().to_string()
+    }
+
+    pub fn get_ca_cert(&self) -> String {
+        self.ca_cert.field.value().to_string()
+    }
+
+    pub fn get_client_cert(&self) -> String {
+        self.client_cert.field.value().to_string()
+    }
+
+    pub fn get_client_key(&self) -> String {
+        self.client_key.field.value().to_string()
+    }
+
+    pub fn get_key_passphrase(&self) -> Option<String> {
+        let val = self.key_passphrase.field.value();
+        if val.is_empty() { None } else { Some(val.to_string()) }
+    }
+
     pub fn apply(&mut self, network_name: &str) -> Result<()> {
         self.validate()?;
 

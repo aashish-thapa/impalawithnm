@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crossterm::event::{KeyCode, KeyEvent};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -11,6 +13,7 @@ use ratatui::{
 use tui_input::Input;
 
 use crate::event::Event;
+use crate::nm::NMClient;
 
 pub mod eduroam;
 pub mod peap;
@@ -58,6 +61,7 @@ pub struct WPAEntreprise {
     pub eap: Eap,
     pub network_name: String,
     focused_section: FocusedSection,
+    client: Option<Arc<NMClient>>,
 }
 
 #[derive(Debug)]
@@ -81,11 +85,12 @@ impl Eap {
 }
 
 impl WPAEntreprise {
-    pub fn new(network_name: String) -> Self {
+    pub fn new(network_name: String, client: Option<Arc<NMClient>>) -> Self {
         Self {
             eap: Eap::new(),
             network_name,
             focused_section: FocusedSection::EapChoice,
+            client,
         }
     }
     pub fn handle_key_events(&mut self, key_event: KeyEvent, sender: UnboundedSender<Event>) {
@@ -430,17 +435,60 @@ impl WPAEntreprise {
 
                 FocusedSection::Apply => {
                     if let KeyCode::Enter = key_event.code {
-                        let result = match &mut self.eap {
-                            Eap::TLS(v) => v.apply(self.network_name.as_str()),
-                            Eap::TTLS(v) => v.apply(self.network_name.as_str()),
-                            Eap::PEAP(v) => v.apply(self.network_name.as_str()),
-                            Eap::PWD(v) => v.apply(self.network_name.as_str()),
-                            Eap::Eduroam(v) => v.apply(),
+                        // Extract EAP configuration
+                        let (eap_method, identity, password, phase2_auth, ca_cert, client_cert, private_key, key_passphrase) = match &mut self.eap {
+                            Eap::TLS(v) => {
+                                if v.validate().is_err() { return; }
+                                ("tls", v.get_identity(), None, None,
+                                 Some(v.get_ca_cert()), Some(v.get_client_cert()),
+                                 Some(v.get_client_key()), v.get_key_passphrase())
+                            }
+                            Eap::TTLS(v) => {
+                                if v.validate().is_err() { return; }
+                                ("ttls", v.get_identity(), Some(v.get_phase2_password()),
+                                 Some(v.get_phase2_method()), v.get_ca_cert(),
+                                 v.get_client_cert(), v.get_client_key(), v.get_key_passphrase())
+                            }
+                            Eap::PEAP(v) => {
+                                if v.validate().is_err() { return; }
+                                ("peap", v.get_identity(), Some(v.get_phase2_password()),
+                                 Some(v.get_phase2_method()), v.get_ca_cert(),
+                                 v.get_client_cert(), v.get_client_key(), v.get_key_passphrase())
+                            }
+                            Eap::PWD(v) => {
+                                if v.validate().is_err() { return; }
+                                ("pwd", v.get_identity(), Some(v.get_password()), None, None, None, None, None)
+                            }
+                            Eap::Eduroam(v) => {
+                                if v.validate().is_err() { return; }
+                                ("peap", v.get_identity(), Some(v.get_phase2_password()),
+                                 Some("mschapv2".to_string()), None, None, None, None)
+                            }
                         };
-                        if result.is_ok() {
-                            let _ = sender.send(Event::Tick);
-                            let _ =
-                                sender.send(Event::EapNeworkConfigured(self.network_name.clone()));
+
+                        if let Some(client) = &self.client {
+                            let client = client.clone();
+                            let network_name = self.network_name.clone();
+                            let sender = sender.clone();
+
+                            tokio::spawn(async move {
+                                let result = client.add_enterprise_connection(
+                                    &network_name,
+                                    eap_method,
+                                    &identity,
+                                    password.as_deref(),
+                                    phase2_auth.as_deref(),
+                                    ca_cert.as_deref(),
+                                    client_cert.as_deref(),
+                                    private_key.as_deref(),
+                                    key_passphrase.as_deref(),
+                                ).await;
+
+                                if result.is_ok() {
+                                    let _ = sender.send(Event::Tick);
+                                    let _ = sender.send(Event::EapNeworkConfigured(network_name));
+                                }
+                            });
                         }
                     }
                 }
