@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
-use iwdrs::{modes::Mode, session::Session};
+use crate::nm::{Mode, NMClient};
 
 use crate::{
     adapter::Adapter, agent::AuthAgent, config::Config, device::Device, event::Event,
@@ -30,7 +30,7 @@ pub struct App {
     pub running: bool,
     pub focused_block: FocusedBlock,
     pub notifications: Vec<Notification>,
-    pub session: Arc<Session>,
+    pub client: Arc<NMClient>,
     pub adapter: Adapter,
     pub device: Device,
     pub agent: AuthAgent,
@@ -46,12 +46,12 @@ impl App {
         config: Arc<Config>,
         mode: Mode,
     ) -> Result<Self> {
-        let session = {
-            match iwdrs::session::Session::new().await {
-                Ok(session) => Arc::new(session),
+        let client = {
+            match NMClient::new().await {
+                Ok(client) => Arc::new(client),
                 Err(e) => {
                     return Err(anyhow!(
-                        "Can not access the iwd service.
+                        "Can not access the NetworkManager service.
 Error: {}",
                         e
                     ));
@@ -59,23 +59,33 @@ Error: {}",
             }
         };
 
-        let adapter = match Adapter::new(session.clone(), config.clone()).await {
+        let mut device = Device::new(client.clone()).await?;
+
+        let adapter = match Adapter::new(
+            client.clone(),
+            device.name.clone(), // Use device interface name as path placeholder
+            config.clone(),
+        )
+        .await
+        {
             Ok(v) => v,
             Err(e) => {
-                return Err(anyhow!("Can not access the iwd service: {}", e));
+                return Err(anyhow!("Can not access the NetworkManager service: {}", e));
             }
         };
 
-        let device = Device::new(session.clone()).await?;
+        // Set the initial mode
         device.set_mode(mode).await?;
 
         let agent = AuthAgent::new(sender);
-        let _ = session.register_agent(agent.clone()).await?;
+        // Note: NetworkManager handles authentication differently than iwd
+        // Secrets are managed via NetworkManager's SecretAgent interface
+        // For now, we'll handle password prompts through the existing agent mechanism
 
         let focused_block = if device.is_powered {
             match device.mode {
                 Mode::Station => FocusedBlock::KnownNetworks,
-                _ => FocusedBlock::AccessPoint,
+                Mode::Ap => FocusedBlock::AccessPoint,
             }
         } else {
             FocusedBlock::Device
@@ -87,7 +97,7 @@ Error: {}",
             running: true,
             focused_block,
             notifications: Vec::new(),
-            session,
+            client,
             adapter,
             agent,
             reset,
@@ -99,16 +109,16 @@ Error: {}",
     }
 
     pub async fn reset(mode: Mode) -> Result<()> {
-        let session = {
-            match iwdrs::session::Session::new().await {
-                Ok(session) => Arc::new(session),
-                Err(e) => return Err(anyhow!("Can not access the iwd service: {}", e)),
+        let client = {
+            match NMClient::new().await {
+                Ok(client) => Arc::new(client),
+                Err(e) => return Err(anyhow!("Can not access the NetworkManager service: {}", e)),
             }
         };
 
-        let device = match Device::new(session.clone()).await {
+        let mut device = match Device::new(client.clone()).await {
             Ok(v) => v,
-            Err(e) => return Err(anyhow!("Can not access the iwd service: {}", e)),
+            Err(e) => return Err(anyhow!("Can not access the NetworkManager service: {}", e)),
         };
 
         device.set_mode(mode).await?;
