@@ -7,11 +7,10 @@ use crate::device::Device;
 use crate::event::Event;
 use crate::mode::ap::APFocusedSection;
 use crate::mode::station::share::Share;
+use crate::nm::{Mode, SecurityType};
 use crate::notification::{self, Notification};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use iwdrs::modes::Mode;
-use iwdrs::network::NetworkType;
 use tokio::sync::mpsc::UnboundedSender;
 use tui_input::backend::crossterm::EventHandler;
 
@@ -23,36 +22,42 @@ pub async fn toggle_connect(app: &mut App, sender: UnboundedSender<Event>) -> Re
                     if net_index < station.new_networks.len() {
                         let (net, _) = station.new_networks[net_index].clone();
 
-                        if net.network_type == NetworkType::Eap {
+                        // Check if it's an enterprise network
+                        if net.network_type == SecurityType::Enterprise {
                             sender.send(Event::ConfigureNewEapNetwork(net.name.clone()))?;
                             return Ok(());
                         }
+
+                        // Check if password is required for this network
+                        if net.requires_password() {
+                            // Request password from user
+                            app.network_name_requiring_auth = Some(net.name.clone());
+                            app.agent.request_passphrase(net.name.clone())?;
+                            app.focused_block = FocusedBlock::PskAuthKey;
+                            return Ok(());
+                        }
+
+                        // Open network - connect directly
                         tokio::spawn(async move {
-                            let _ = net.connect(sender.clone()).await;
+                            let _ = net.connect(sender.clone(), None).await;
                         });
                     } else {
+                        // Hidden network selected
                         let net = station.new_hidden_networks
                             [net_index.saturating_sub(station.new_networks.len())]
                         .clone();
 
-                        if net.network_type == NetworkType::Eap {
+                        if net.network_type == "8021x" {
                             sender.send(Event::ConfigureNewEapNetwork(net.address.clone()))?;
                             return Ok(());
                         }
-                        tokio::spawn({
-                            let iwd_station =
-                                station.session.stations().await.unwrap().pop().unwrap();
-                            let ssid = net.address.clone();
-                            async move {
-                                if let Err(e) = iwd_station.connect_hidden_network(ssid).await {
-                                    let _ = Notification::send(
-                                        e.to_string(),
-                                        notification::NotificationLevel::Error,
-                                        &sender,
-                                    );
-                                }
-                            }
-                        });
+
+                        // Hidden network connection - notify user it's not yet implemented
+                        let _ = Notification::send(
+                            "Hidden network connection not yet implemented".to_string(),
+                            notification::NotificationLevel::Info,
+                            &sender,
+                        );
                     }
                 }
             }
@@ -78,7 +83,8 @@ pub async fn toggle_connect(app: &mut App, sender: UnboundedSender<Event>) -> Re
                                 let (net, _) = station.known_networks[index].clone();
                                 station.disconnect(sender.clone()).await?;
                                 tokio::spawn(async move {
-                                    let _ = net.connect(sender.clone()).await;
+                                    // Known networks already have saved credentials
+                                    let _ = net.connect(sender.clone(), None).await;
                                 });
                             }
                         }
@@ -99,7 +105,8 @@ pub async fn toggle_connect(app: &mut App, sender: UnboundedSender<Event>) -> Re
                         if let Some(index) = net_index {
                             let (net, _) = station.known_networks[index].clone();
                             tokio::spawn(async move {
-                                let _ = net.connect(sender.clone()).await;
+                                // Known networks already have saved credentials
+                                let _ = net.connect(sender.clone(), None).await;
                             });
                         }
                     }
@@ -435,7 +442,8 @@ pub async fn handle_key_events(
                                                     );
                                                     let network =
                                                         &station.unavailable_known_networks[index];
-                                                    if network.network_type == NetworkType::Psk
+                                                    // Check if it's a PSK network (WPA/WPA2/WPA3)
+                                                    if matches!(network.network_type, SecurityType::WPA | SecurityType::WPA2 | SecurityType::WPA3)
                                                         && let Ok(share) =
                                                             Share::new(network.name.clone())
                                                     {
@@ -446,7 +454,8 @@ pub async fn handle_key_events(
                                                 } else {
                                                     let (network, _) =
                                                         &station.known_networks[net_index];
-                                                    if network.network_type == NetworkType::Psk
+                                                    // Check if it's a PSK network (WPA/WPA2/WPA3)
+                                                    if matches!(network.network_type, SecurityType::WPA | SecurityType::WPA2 | SecurityType::WPA3)
                                                         && let Ok(share) =
                                                             Share::new(network.name.clone())
                                                     {
@@ -493,9 +502,9 @@ pub async fn handle_key_events(
                                                 station.known_networks_state.selected()
                                                 && net_index < station.known_networks.len()
                                             {
-                                                let (net, _) = &station.known_networks[net_index];
+                                                let (net, _) = &mut station.known_networks[net_index];
 
-                                                if let Some(known_net) = &net.known_network {
+                                                if let Some(known_net) = &mut net.known_network {
                                                     known_net
                                                         .toggle_autoconnect(sender.clone())
                                                         .await?;
