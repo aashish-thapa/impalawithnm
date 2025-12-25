@@ -1,7 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::{Arc, atomic::AtomicBool};
 
-use iwdrs::session::Session;
+use crate::nm::NMClient;
 use tokio::sync::mpsc::UnboundedSender;
 
 use ratatui::{
@@ -31,7 +31,8 @@ pub enum APFocusedSection {
 
 #[derive(Debug, Clone)]
 pub struct AccessPoint {
-    session: Arc<Session>,
+    client: Arc<NMClient>,
+    device_path: String,
     pub has_started: bool,
     pub name: Option<String>,
     pub frequency: Option<u32>,
@@ -43,45 +44,34 @@ pub struct AccessPoint {
     pub psk: Input,
     pub focused_section: APFocusedSection,
     pub connected_devices: Vec<String>,
+    active_hotspot_path: Option<String>,
 }
 
 impl AccessPoint {
-    pub async fn new(session: Arc<Session>) -> Result<Self> {
-        let iwd_access_point = session
-            .access_points()
-            .await?
-            .pop()
-            .context("no ap found")?;
-        let iwd_access_point_diagnostic = session.access_points_diagnostics().await?.pop();
+    pub async fn new(client: Arc<NMClient>, device_path: String) -> Result<Self> {
+        // Check if there's an active hotspot connection
+        let (has_started, name, active_hotspot_path) =
+            Self::check_active_hotspot(&client, &device_path).await;
 
-        let has_started = iwd_access_point.has_started().await?;
-        let name = iwd_access_point.name().await?;
-        let frequency = iwd_access_point.frequency().await?;
-        let is_scanning = iwd_access_point.is_scanning().await.ok();
-        let supported_ciphers = iwd_access_point.pairwise_ciphers().await?;
-        let used_cipher = iwd_access_point.group_cipher().await?;
+        // NetworkManager doesn't expose frequency/cipher info the same way iwd does
+        // We'll populate these when the hotspot is active
+        let frequency = None;
+        let is_scanning = None;
+        let supported_ciphers = Some(vec!["CCMP".to_string(), "TKIP".to_string()]);
+        let used_cipher = Some("CCMP".to_string());
         let ap_start = Arc::new(AtomicBool::new(false));
 
         let ssid = Input::default();
         let psk = Input::default();
         let focused_section = APFocusedSection::SSID;
 
-        let connected_devices = {
-            if let Some(diagnostic) = iwd_access_point_diagnostic {
-                match diagnostic.get().await {
-                    Ok(diagnostic) => diagnostic
-                        .iter()
-                        .map(|v| v["Address"].clone().trim_matches('"').to_string())
-                        .collect(),
-                    Err(_) => Vec::new(),
-                }
-            } else {
-                Vec::new()
-            }
-        };
+        // Connected devices would need to be queried from DHCP leases
+        // This is more complex with NetworkManager
+        let connected_devices = Vec::new();
 
         Ok(Self {
-            session,
+            client,
+            device_path,
             has_started,
             name,
             frequency,
@@ -93,7 +83,46 @@ impl AccessPoint {
             psk,
             focused_section,
             connected_devices,
+            active_hotspot_path,
         })
+    }
+
+    async fn check_active_hotspot(
+        client: &NMClient,
+        device_path: &str,
+    ) -> (bool, Option<String>, Option<String>) {
+        // Check active connections for a hotspot on this device
+        if let Ok(active_connections) = client.get_active_connections().await {
+            for conn_path in active_connections {
+                if let Ok(info) = client.get_active_connection_info(conn_path.as_str()).await {
+                    // Check if this connection is on our device and is a hotspot
+                    if info.devices.contains(&device_path.to_string()) {
+                        // Check if it's a hotspot by looking at the connection settings
+                        if let Ok(settings) =
+                            client.get_connection_settings(&info.connection_path).await
+                        {
+                            if let Some(wireless) = settings.get("802-11-wireless") {
+                                if let Some(mode) = wireless.get("mode") {
+                                    if let Ok(mode_str) =
+                                        mode.try_clone().and_then(|v| v.try_into())
+                                    {
+                                        let mode_string: String = mode_str;
+                                        if mode_string == "ap" {
+                                            return (
+                                                true,
+                                                Some(info.id),
+                                                Some(conn_path.to_string()),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        (false, None, None)
     }
 
     pub fn render_input(&self, frame: &mut Frame) {
@@ -216,90 +245,105 @@ impl AccessPoint {
     }
 
     pub async fn refresh(&mut self) -> Result<()> {
-        let iwd_access_point = self
-            .session
-            .access_points()
-            .await?
-            .pop()
-            .context("No AP found")?;
-        let iwd_access_point_diagnostic = self.session.access_points_diagnostics().await?.pop();
+        let (has_started, name, active_hotspot_path) =
+            Self::check_active_hotspot(&self.client, &self.device_path).await;
 
-        self.has_started = iwd_access_point.has_started().await?;
-        self.name = iwd_access_point.name().await?;
-        self.frequency = iwd_access_point.frequency().await?;
-        self.is_scanning = iwd_access_point.is_scanning().await.ok();
-        self.supported_ciphers = iwd_access_point.pairwise_ciphers().await?;
-        self.used_cipher = iwd_access_point.group_cipher().await?;
+        self.has_started = has_started;
+        self.name = name;
+        self.active_hotspot_path = active_hotspot_path;
 
-        if let Some(diagnostic) = iwd_access_point_diagnostic {
-            if let Ok(diagnostic) = diagnostic.get().await {
-                self.connected_devices = diagnostic
-                    .iter()
-                    .map(|v| v["Address"].clone().trim_matches('"').to_string())
-                    .collect();
-            }
-        } else {
-            self.connected_devices = Vec::new()
-        };
+        // TODO: Get connected devices from DHCP leases if hotspot is active
+        // This would require reading /var/lib/NetworkManager/dnsmasq-*.leases
+        // or similar, which is more complex
 
         Ok(())
     }
 
     pub async fn scan(&self, sender: UnboundedSender<Event>) -> Result<()> {
-        let iwd_access_point = self
-            .session
-            .access_points()
-            .await?
-            .pop()
-            .context("No AP found")?;
-        match iwd_access_point.scan().await {
-            Ok(()) => Notification::send(
-                "Start Scanning".to_string(),
-                NotificationLevel::Info,
-                &sender,
-            )?,
-            Err(e) => Notification::send(e.to_string(), NotificationLevel::Error, &sender.clone())?,
-        }
-
+        // NetworkManager doesn't support scanning in AP mode
+        Notification::send(
+            "Scanning not supported in AP mode".to_string(),
+            NotificationLevel::Info,
+            &sender,
+        )?;
         Ok(())
     }
 
-    pub async fn start(&self, sender: UnboundedSender<Event>) -> Result<()> {
-        let iwd_access_point = self
-            .session
-            .access_points()
-            .await?
-            .pop()
-            .context("No AP found")?;
-        match iwd_access_point
-            .start(self.ssid.value(), self.psk.value())
+    pub async fn start(&mut self, sender: UnboundedSender<Event>) -> Result<()> {
+        let ssid = self.ssid.value().to_string();
+        let psk = self.psk.value().to_string();
+
+        if ssid.is_empty() {
+            Notification::send(
+                "SSID cannot be empty".to_string(),
+                NotificationLevel::Error,
+                &sender,
+            )?;
+            return Ok(());
+        }
+
+        if psk.len() < 8 {
+            Notification::send(
+                "Password must be at least 8 characters".to_string(),
+                NotificationLevel::Error,
+                &sender,
+            )?;
+            return Ok(());
+        }
+
+        match self
+            .client
+            .create_hotspot(&self.device_path, &ssid, &psk)
             .await
         {
-            Ok(()) => Notification::send(
-                format!("AP Started\nSSID: {}", self.ssid.value()),
-                NotificationLevel::Info,
-                &sender,
-            )?,
-            Err(e) => Notification::send(e.to_string(), NotificationLevel::Error, &sender.clone())?,
+            Ok(active_path) => {
+                self.has_started = true;
+                self.name = Some(ssid.clone());
+                self.active_hotspot_path = Some(active_path.to_string());
+                Notification::send(
+                    format!("AP Started\nSSID: {}", ssid),
+                    NotificationLevel::Info,
+                    &sender,
+                )?;
+            }
+            Err(e) => {
+                Notification::send(
+                    format!("Failed to start AP: {}", e),
+                    NotificationLevel::Error,
+                    &sender,
+                )?;
+            }
         }
+
         self.ap_start
             .store(false, std::sync::atomic::Ordering::Relaxed);
 
         Ok(())
     }
 
-    pub async fn stop(&self, sender: UnboundedSender<Event>) -> Result<()> {
-        let iwd_access_point = self
-            .session
-            .access_points()
-            .await?
-            .pop()
-            .context("No AP found")?;
-        match iwd_access_point.stop().await {
-            Ok(()) => {
-                Notification::send("AP Stopped".to_string(), NotificationLevel::Info, &sender)?
+    pub async fn stop(&mut self, sender: UnboundedSender<Event>) -> Result<()> {
+        if let Some(active_path) = &self.active_hotspot_path {
+            match self.client.deactivate_connection(active_path).await {
+                Ok(()) => {
+                    self.has_started = false;
+                    self.name = None;
+                    self.active_hotspot_path = None;
+                    Notification::send("AP Stopped".to_string(), NotificationLevel::Info, &sender)?;
+                }
+                Err(e) => {
+                    Notification::send(
+                        format!("Failed to stop AP: {}", e),
+                        NotificationLevel::Error,
+                        &sender,
+                    )?;
+                }
             }
-            Err(e) => Notification::send(e.to_string(), NotificationLevel::Error, &sender.clone())?,
+        } else {
+            Notification::send(
+                "No active hotspot to stop".to_string(),
+                NotificationLevel::Info,
+                &sender,
+            )?;
         }
 
         Ok(())
@@ -417,19 +461,23 @@ impl AccessPoint {
 
         // Access Point
         let ap_name = if self.has_started {
-            self.name.as_ref().unwrap().clone()
+            self.name.as_ref().unwrap_or(&"-".to_string()).clone()
         } else {
             "-".to_string()
         };
 
         let ap_frequency = if self.has_started {
-            format!("{:.2} GHz", (self.frequency.unwrap() / 1000))
+            if let Some(freq) = self.frequency {
+                format!("{:.2} GHz", (freq / 1000))
+            } else {
+                "2.4 GHz".to_string() // Default for hotspot
+            }
         } else {
             "-".to_string()
         };
 
         let ap_used_cipher = if self.has_started {
-            self.used_cipher.as_ref().unwrap().clone()
+            self.used_cipher.as_ref().unwrap_or(&"-".to_string()).clone()
         } else {
             "-".to_string()
         };
@@ -517,7 +565,6 @@ impl AccessPoint {
                 Style::default()
             });
 
-        //TODO: maybe make it stateless
         let mut access_point_state = TableState::default().with_selected(0);
         frame.render_stateful_widget(
             access_point_table,
