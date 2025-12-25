@@ -1,4 +1,4 @@
-use iwdrs::modes::Mode;
+use crate::nm::Mode;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout},
