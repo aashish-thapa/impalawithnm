@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crossterm::event::{Event as CrosstermEvent, KeyEvent, MouseEvent};
 use futures::{FutureExt, StreamExt};
-use iwdrs::modes::Mode;
+use crate::nm::Mode;
 use tokio::sync::mpsc;
 
 use crate::notification::Notification;
