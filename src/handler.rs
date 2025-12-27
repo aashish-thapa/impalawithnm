@@ -455,18 +455,17 @@ pub async fn handle_key_events(
                                                         SecurityType::WPA
                                                             | SecurityType::WPA2
                                                             | SecurityType::WPA3
+                                                    ) && let Ok(share) = Share::new(
+                                                        network.client.clone(),
+                                                        &network.connection_path,
+                                                        network.name.clone(),
                                                     )
-                                                        && let Ok(share) = Share::new(
-                                                            network.client.clone(),
-                                                            &network.connection_path,
-                                                            network.name.clone(),
-                                                        )
-                                                        .await
-                                                        {
-                                                            station.share = Some(share);
-                                                            app.focused_block =
-                                                                FocusedBlock::ShareNetwork;
-                                                        }
+                                                    .await
+                                                    {
+                                                        station.share = Some(share);
+                                                        app.focused_block =
+                                                            FocusedBlock::ShareNetwork;
+                                                    }
                                                 } else {
                                                     let (network, _) =
                                                         &station.known_networks[net_index];
@@ -476,19 +475,18 @@ pub async fn handle_key_events(
                                                         SecurityType::WPA
                                                             | SecurityType::WPA2
                                                             | SecurityType::WPA3
-                                                    )
-                                                        && let Some(known) = &network.known_network
-                                                            && let Ok(share) = Share::new(
-                                                                known.client.clone(),
-                                                                &known.connection_path,
-                                                                network.name.clone(),
-                                                            )
-                                                            .await
-                                                            {
-                                                                station.share = Some(share);
-                                                                app.focused_block =
-                                                                    FocusedBlock::ShareNetwork;
-                                                            }
+                                                    ) && let Some(known) = &network.known_network
+                                                        && let Ok(share) = Share::new(
+                                                            known.client.clone(),
+                                                            &known.connection_path,
+                                                            network.name.clone(),
+                                                        )
+                                                        .await
+                                                    {
+                                                        station.share = Some(share);
+                                                        app.focused_block =
+                                                            FocusedBlock::ShareNetwork;
+                                                    }
                                                 }
                                             }
                                         }
